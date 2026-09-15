@@ -1,0 +1,1 @@
+# Deterministic recorded-bar replay with fake broker only (no external dependencies needed)
