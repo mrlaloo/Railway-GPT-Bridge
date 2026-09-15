@@ -1,0 +1,113 @@
+--- a/moneypenny/runtime.py
++++ b/moneypenny/runtime.py
+@@ -39,6 +39,9 @@
+ TRADES = {}
+ STATS = Counter()
+ REJECT = Counter()
++# Trade ids already booked into STATS / PAIR_RESULTS this process.
++# Prevents stale persisted snapshots from double-finalizing.
++_FINALIZED = set()
+ _ACCOUNT = {"at": 0.0, "snapshot": None}
+ _SIM_SEQ = 0
+ 
+@@ -279,6 +282,10 @@
+ 
+ 
+ def finalize(key, mark, pips, reason):
++    key = str(key)
++    if key in _FINALIZED:
++        TRADES.pop(key, None)
++        return
+     trade = TRADES.pop(key, None)
+     if not trade:
+         return
+@@ -287,6 +294,7 @@
+     STATS["closed"] += 1
+     STATS["net_pips"] += pips
+     note_result(trade["pair"], pips)
++    _FINALIZED.add(key)
+     hold_seconds = max(0.0, time.time() - float(trade.get("opened") or time.time()))
+     outcome = {
+         "pair": trade["pair"],
+@@ -510,7 +518,18 @@
+ 
+ 
+ def finalize_live(key, details, software_reason=None):
+-    trade = TRADES.get(str(key))
++    key = str(key)
++    if key in _FINALIZED:
++        TRADES.pop(key, None)
++        log.info("[%s CLOSE SKIP] id=%s already finalized; stats not incremented", VERSION, key)
++        return False
++    persisted_row = state.tracked_trades().get(key) or {}
++    if persisted_row.get("closed"):
++        TRADES.pop(key, None)
++        _FINALIZED.add(key)
++        log.info("[%s CLOSE SKIP] id=%s persisted already closed; stats not incremented", VERSION, key)
++        return False
++    trade = TRADES.get(key)
+     if not trade:
+         return False
+     exit_raw = details.get("averageClosePrice")
+@@ -522,14 +541,6 @@
+         direction = 1 if trade["side"] == "BUY" else -1
+         pips = ((exit_price - trade["entry"]) / pip_size(trade["pair"])) * direction
+     result = classify(pips, realized_pl)
+-    if pips is not None:
+-        STATS[result.lower()] += 1
+-        STATS["closed"] += 1
+-        STATS["net_pips"] += pips
+-        note_result(trade["pair"], pips)
+-    else:
+-        STATS[result.lower()] += 1
+-        STATS["closed"] += 1
+     hold_seconds = max(0.0, time.time() - float(trade.get("opened") or time.time()))
+     payload = {
+         "pair": trade["pair"],
+@@ -555,8 +566,21 @@
+         "projected_r": trade.get("projected_r"),
+         "quality": trade.get("quality"),
+     }
+-    written = state.record_outcome(str(key), payload)
+-    TRADES.pop(str(key), None)
++    written = state.record_outcome(key, payload)
++    TRADES.pop(key, None)
++    if not written:
++        _FINALIZED.add(key)
++        log.info("[%s CLOSE SKIP] id=%s record_outcome already closed; stats not incremented", VERSION, key)
++        return False
++    if pips is not None:
++        STATS[result.lower()] += 1
++        STATS["closed"] += 1
++        STATS["net_pips"] += pips
++        note_result(trade["pair"], pips)
++    else:
++        STATS[result.lower()] += 1
++        STATS["closed"] += 1
++    _FINALIZED.add(key)
+     log.info(
+         "[%s BROKER CLOSE] id=%s %s %s result=%s pips=%s pl=%s exit=%s reason=%s",
+         VERSION, key, trade["pair"], trade["side"], result, pips, realized_pl, exit_price,
+@@ -567,6 +591,11 @@
+ 
+ def _resolve_absent_trade(broker, tid, persisted_row):
+     tid = str(tid)
++    persisted_row = persisted_row or {}
++    if tid in _FINALIZED or persisted_row.get("closed"):
++        TRADES.pop(tid, None)
++        _FINALIZED.add(tid)
++        return
+     try:
+         details = broker.details(tid)
+     except Exception as exc:
+@@ -735,6 +764,10 @@
+             continue
+         _resolve_absent_trade(broker, tid, persisted.get(tid, {}))
+ 
++    # First loop may have finalized trades. Refresh again so the persisted-row
++    # loop cannot rehydrate a just-closed snapshot and double-book STATS.
++    persisted = state.tracked_trades()
++
+     for tid, old in list(persisted.items()):
+         tid = str(tid)
+         if old.get("closed") or tid in open_ids or tid in TRADES:
