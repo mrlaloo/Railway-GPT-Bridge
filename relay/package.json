@@ -1,0 +1,14 @@
+{
+  "name": "ai-board-grok-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js",
+    "selftest": "node selftest.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
