@@ -1,0 +1,4 @@
+ALFRED-GRID-008-shadow-review.zip
+d2361bee2fb517e37ea158d2e5239d0deff58d80bf7450ca0eaa3e25daf937da
+
+The binary zip was generated after all 5 unit tests passed. GitHub review source is mirrored in this directory for browser-based review.
