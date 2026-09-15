@@ -1,0 +1,290 @@
+--- a/reviews/ALFRED-GRID-008/v2/alfred_grid_008_shadow.py
++++ b/reviews/ALFRED-GRID-008/v3/alfred_grid_008_shadow.py
+@@ -76,6 +76,8 @@
+     realized_net: Decimal = ZERO
+     last_buy_order_id: str = ""
+     last_sell_order_id: str = ""
++    working_buy_order_id: str = ""
++    working_sell_order_id: str = ""
+ 
+     def to_dict(self) -> dict[str, Any]:
+         return {
+@@ -89,6 +91,8 @@
+             "realized_net": str(self.realized_net),
+             "last_buy_order_id": self.last_buy_order_id,
+             "last_sell_order_id": self.last_sell_order_id,
++            "working_buy_order_id": self.working_buy_order_id,
++            "working_sell_order_id": self.working_sell_order_id,
+         }
+ 
+     @classmethod
+@@ -104,6 +108,8 @@
+             realized_net=D(row.get("realized_net", 0)),
+             last_buy_order_id=str(row.get("last_buy_order_id", "")),
+             last_sell_order_id=str(row.get("last_sell_order_id", "")),
++            working_buy_order_id=str(row.get("working_buy_order_id", "")),
++            working_sell_order_id=str(row.get("working_sell_order_id", "")),
+         )
+ 
+ 
+@@ -119,6 +125,34 @@
+     paired: bool = False
+ 
+ 
++@dataclass(frozen=True)
++class BrokerOpenOrder:
++    order_id: str
++    symbol: str
++    side: str
++
++
++@dataclass(frozen=True)
++class ReconciliationReport:
++    matched: tuple[str, ...]
++    missing_at_broker: tuple[str, ...]
++    unexpected_at_broker: tuple[str, ...]
++
++    @property
++    def clean(self) -> bool:
++        return not self.missing_at_broker and not self.unexpected_at_broker
++
++
++@dataclass(frozen=True)
++class ReleasePlan:
++    cancel_order_ids: tuple[str, ...]
++    blocked_reason: str = ""
++
++    @property
++    def ready(self) -> bool:
++        return not self.blocked_reason
++
++
+ @dataclass
+ class LaneStats:
+     last_fill_age_hours: Decimal = ZERO
+@@ -220,27 +254,39 @@
+             if rung.state == "parked":
+                 rung.state = "armed"
+ 
+-    def nearest_live_buys(self, mid: Decimal) -> List[ShadowOrder]:
++    def nearest_live_buys(self, mid: Decimal, available_cash_usd: Decimal | None = None) -> List[ShadowOrder]:
+         mid = D(mid)
+         if not self.lane_kept:
+             return []
+         self._refresh_parked(mid)
++        existing_slots = sum(1 for rung in self.rungs.values() if rung.working_buy_order_id)
++        slots_left = max(0, self.cfg.live_buy_slots - existing_slots)
++        if slots_left <= 0:
++            return []
++        cash_left = None if available_cash_usd is None else max(ZERO, D(available_cash_usd))
+         candidates: List[Tuple[Decimal, VirtualRung]] = []
+         for rung in self.rungs.values():
+-            if rung.state != "armed":
++            if rung.state != "armed" or rung.working_buy_order_id:
+                 continue
+             if not self.within_live_buy_distance(mid, rung.buy_price):
+                 continue
+             candidates.append((mid - rung.buy_price, rung))
+         candidates.sort(key=lambda item: item[0])
+         out: List[ShadowOrder] = []
+-        for _, rung in candidates[: self.cfg.live_buy_slots]:
++        for _, rung in candidates:
++            if len(out) >= slots_left:
++                break
+             qty = q_qty(self.cfg.level_budget_usd / rung.buy_price)
+-            if qty * rung.buy_price < self.cfg.min_notional_usd:
++            notional = qty * rung.buy_price
++            if notional < self.cfg.min_notional_usd:
++                continue
++            if cash_left is not None and notional > cash_left:
+                 continue
+             oid = self._order_id("buy", rung)
+             rung.last_buy_order_id = oid
+             out.append(ShadowOrder(oid, self.symbol, "buy", rung.level, rung.cycle, rung.buy_price, qty))
++            if cash_left is not None:
++                cash_left = max(ZERO, cash_left - notional)
+         return out
+ 
+     def paired_sells(self) -> List[ShadowOrder]:
+@@ -248,8 +294,9 @@
+         for rung in sorted(self.rungs.values(), key=lambda r: r.level):
+             if rung.state != "sell_armed" or rung.filled_qty <= 0:
+                 continue
+-            oid = self._order_id("sell", rung)
++            oid = rung.working_sell_order_id or self._order_id("sell", rung)
+             rung.last_sell_order_id = oid
++            rung.working_sell_order_id = oid
+             out.append(ShadowOrder(oid, self.symbol, "sell", rung.level, rung.cycle, rung.sell_target, rung.filled_qty, True))
+         return out
+ 
+@@ -268,6 +315,9 @@
+                 rung.filled_qty = order.qty
+                 rung.entry_price = order.price
+                 rung.sell_target = self.sell_target_for(order.price)
++                rung.working_buy_order_id = ""
++                rung.working_sell_order_id = self._order_id("sell", rung)
++                rung.last_sell_order_id = rung.working_sell_order_id
+                 self.fill_events += 1
+                 events.append(f"BUY_FILL {order.order_id} {order.qty}@{order.price}")
+ 
+@@ -287,6 +337,7 @@
+                 self.completed_round_trips += 1
+                 self.fill_events += 1
+                 events.append(f"SELL_FILL {order.order_id} net={net}")
++                rung.working_sell_order_id = ""
+                 rung.cycle += 1
+                 rung.filled_qty = ZERO
+                 rung.entry_price = ZERO
+@@ -296,12 +347,80 @@
+                 rung.state = "armed" if self.lane_kept and self.within_origin_window(mid) else "parked"
+         return events
+ 
++    def register_open_order(self, order: ShadowOrder) -> None:
++        if order.symbol != self.symbol:
++            raise ValueError("order symbol does not match lane")
++        rung = self.rungs.get(order.level)
++        if rung is None or rung.cycle != order.cycle:
++            raise ValueError("order does not match persisted rung/cycle")
++        if order.side == "buy":
++            rung.last_buy_order_id = order.order_id
++            rung.working_buy_order_id = order.order_id
++        elif order.side == "sell":
++            rung.last_sell_order_id = order.order_id
++            rung.working_sell_order_id = order.order_id
++        else:
++            raise ValueError("unsupported side")
++
++    def clear_open_order(self, order_id: str) -> bool:
++        for rung in self.rungs.values():
++            if rung.working_buy_order_id == order_id:
++                rung.working_buy_order_id = ""
++                return True
++            if rung.working_sell_order_id == order_id:
++                rung.working_sell_order_id = ""
++                return True
++        return False
++
++    def expected_open_order_ids(self) -> set[str]:
++        expected: set[str] = set()
++        for rung in self.rungs.values():
++            if rung.working_buy_order_id:
++                expected.add(rung.working_buy_order_id)
++            if rung.state == "sell_armed" and rung.filled_qty > ZERO:
++                if not rung.working_sell_order_id:
++                    rung.working_sell_order_id = self._order_id("sell", rung)
++                    rung.last_sell_order_id = rung.working_sell_order_id
++                expected.add(rung.working_sell_order_id)
++        return expected
++
++    def reconcile_broker_open_orders(self, broker_orders: List[BrokerOpenOrder]) -> ReconciliationReport:
++        expected = self.expected_open_order_ids()
++        observed = {
++            o.order_id for o in broker_orders
++            if o.symbol == self.symbol and o.order_id.startswith("ALFSH-")
++        }
++        return ReconciliationReport(
++            matched=tuple(sorted(expected & observed)),
++            missing_at_broker=tuple(sorted(expected - observed)),
++            unexpected_at_broker=tuple(sorted(observed - expected)),
++        )
++
++    def build_release_cancel_plan(self, broker_orders: List[BrokerOpenOrder]) -> ReleasePlan:
++        lane_orders = [o for o in broker_orders if o.symbol == self.symbol and o.order_id.startswith("ALFSH-")]
++        if any(o.side.lower() == "sell" for o in lane_orders):
++            return ReleasePlan((), "working_sell")
++        buys = tuple(sorted(o.order_id for o in lane_orders if o.side.lower() == "buy"))
++        return ReleasePlan(buys, "")
++
++    def mark_released_after_cancels(self, broker_orders: List[BrokerOpenOrder]) -> None:
++        remaining = [o for o in broker_orders if o.symbol == self.symbol and o.order_id.startswith("ALFSH-")]
++        if remaining:
++            raise RuntimeError("cannot release lane while Alfred broker orders remain open")
++        if self.inventory_qty() > ZERO:
++            raise RuntimeError("cannot release lane while inventory remains")
++        self.lane_kept = False
++        for rung in self.rungs.values():
++            rung.working_buy_order_id = ""
++            if rung.state == "armed":
++                rung.state = "parked"
++
+     def inventory_qty(self) -> Decimal:
+         return sum((r.filled_qty for r in self.rungs.values() if r.state == "sell_armed"), ZERO)
+ 
+     def to_state(self) -> dict[str, Any]:
+         return {
+-            "schema": 2,
++            "schema": 3,
+             "symbol": self.symbol,
+             "origin": str(self.origin),
+             "lane_kept": self.lane_kept,
+
+--- a/reviews/ALFRED-GRID-008/v2/tests/test_shadow.py
++++ b/reviews/ALFRED-GRID-008/v3/tests/test_shadow.py
+@@ -3,6 +3,7 @@
+ from decimal import Decimal
+ 
+ from alfred_grid_008_shadow import (
++    BrokerOpenOrder,
+     FeeSchedule,
+     LaneStats,
+     LeaseTracker,
+@@ -125,6 +126,59 @@
+         lane_b = ShadowLane("TEST/USD", D("1"), cfg, expensive)
+         self.assertLess(lane_a.minimum_profitable_exit(D("1")), lane_b.minimum_profitable_exit(D("1")))
+ 
++
++    def test_cash_tight_falls_back_to_one_slot(self):
++        lane = ShadowLane("TEST/USD", D("1.000000"), ShadowConfig(level_budget_usd=D("12.41")), FEES)
++        two = lane.nearest_live_buys(D("0.994"), available_cash_usd=D("25.00"))
++        one = lane.nearest_live_buys(D("0.994"), available_cash_usd=D("12.50"))
++        none = lane.nearest_live_buys(D("0.994"), available_cash_usd=D("9.99"))
++        self.assertEqual(len(two), 2)
++        self.assertEqual(len(one), 1)
++        self.assertEqual(len(none), 0)
++
++    def test_persisted_open_order_reconciles_with_broker_after_restart(self):
++        lane = ShadowLane("TEST/USD", D("1.000000"), ShadowConfig(level_budget_usd=D("12.00")), FEES)
++        buy = lane.nearest_live_buys(D("0.994"))[0]
++        lane.register_open_order(buy)
++        state = json.loads(json.dumps(lane.to_state()))
++        restored = ShadowLane.from_state(state, lane.cfg, FEES)
++        clean = restored.reconcile_broker_open_orders([BrokerOpenOrder(buy.order_id, "TEST/USD", "buy")])
++        self.assertTrue(clean.clean)
++        self.assertEqual(clean.matched, (buy.order_id,))
++
++        missing = restored.reconcile_broker_open_orders([])
++        self.assertEqual(missing.missing_at_broker, (buy.order_id,))
++
++        extra_id = "ALFSH-TESTUSD-L2-C0-BUY"
++        mixed = restored.reconcile_broker_open_orders([
++            BrokerOpenOrder(buy.order_id, "TEST/USD", "buy"),
++            BrokerOpenOrder(extra_id, "TEST/USD", "buy"),
++        ])
++        self.assertEqual(mixed.unexpected_at_broker, (extra_id,))
++
++    def test_release_builds_explicit_cancel_list_and_parks_after_confirmed_cancels(self):
++        lane = ShadowLane("TEST/USD", D("1.000000"), ShadowConfig(level_budget_usd=D("12.00")), FEES)
++        buys = lane.nearest_live_buys(D("0.994"))
++        broker = [BrokerOpenOrder(o.order_id, o.symbol, o.side) for o in buys]
++        plan = lane.build_release_cancel_plan(broker)
++        self.assertTrue(plan.ready)
++        self.assertEqual(plan.cancel_order_ids, tuple(sorted(o.order_id for o in buys)))
++
++        lane.mark_released_after_cancels([])
++        self.assertFalse(lane.lane_kept)
++        self.assertEqual(lane.nearest_live_buys(D("0.994")), [])
++        self.assertTrue(all(r.state != "armed" for r in lane.rungs.values()))
++
++    def test_release_cancel_plan_blocks_if_working_sell_exists(self):
++        lane = ShadowLane("TEST/USD", D("1.000000"), ShadowConfig(level_budget_usd=D("12.00")), FEES)
++        first = lane.nearest_live_buys(D("0.994"))[0]
++        lane.on_market(first.price, first.price, mid=D("0.994"))
++        sell = lane.paired_sells()[0]
++        plan = lane.build_release_cancel_plan([BrokerOpenOrder(sell.order_id, sell.symbol, sell.side)])
++        self.assertFalse(plan.ready)
++        self.assertEqual(plan.blocked_reason, "working_sell")
++        self.assertEqual(plan.cancel_order_ids, ())
++
+     def test_crv_fixture_releases_after_two_confirmations(self):
+         review = crv_case_from_issue(2)
+         self.assertEqual(review.action, "RELEASE")
