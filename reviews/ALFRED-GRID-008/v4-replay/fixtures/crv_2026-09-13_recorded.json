@@ -1,0 +1,25 @@
+{
+  "source": "Alpaca crypto historical bars, US feed",
+  "symbol": "CRV/USD",
+  "timeframe": "1Min",
+  "origin": "0.3351515",
+  "note": "Chronological recorded bars sampled at all first-cross points needed to reproduce the Sep-13 L1/L2 fills and exits. No synthetic OHLC values.",
+  "bars": [
+    {"timestamp":"2026-09-13T08:30:00Z","open":"0.3343865","high":"0.3345705","low":"0.334179","close":"0.3345705"},
+    {"timestamp":"2026-09-13T08:31:00Z","open":"0.33435","high":"0.334605","low":"0.334285","close":"0.33459"},
+    {"timestamp":"2026-09-13T08:32:00Z","open":"0.33445","high":"0.3346655","low":"0.33445","close":"0.334485"},
+    {"timestamp":"2026-09-13T08:33:00Z","open":"0.334282","high":"0.334282","low":"0.3317365","close":"0.33195"},
+    {"timestamp":"2026-09-13T08:34:00Z","open":"0.331705","high":"0.33231","low":"0.331705","close":"0.33231"},
+    {"timestamp":"2026-09-13T08:38:00Z","open":"0.33123","high":"0.3312365","low":"0.3308395","close":"0.3310055"},
+    {"timestamp":"2026-09-13T08:39:00Z","open":"0.3307975","high":"0.3308345","low":"0.33","close":"0.330244"},
+    {"timestamp":"2026-09-13T08:40:00Z","open":"0.33038","high":"0.33078","low":"0.3302","close":"0.33078"},
+    {"timestamp":"2026-09-13T09:04:00Z","open":"0.3325015","high":"0.3327365","low":"0.3325015","close":"0.3327365"},
+    {"timestamp":"2026-09-13T09:05:00Z","open":"0.332773","high":"0.33327","low":"0.332773","close":"0.33327"},
+    {"timestamp":"2026-09-13T09:06:00Z","open":"0.333594","high":"0.333594","low":"0.333594","close":"0.333594"},
+    {"timestamp":"2026-09-13T09:10:00Z","open":"0.3347675","high":"0.3350175","low":"0.3347675","close":"0.3350175"},
+    {"timestamp":"2026-09-13T09:11:00Z","open":"0.3350175","high":"0.33685","low":"0.3348675","close":"0.3366095"},
+    {"timestamp":"2026-09-13T09:12:00Z","open":"0.336831","high":"0.337813","low":"0.336831","close":"0.337225"},
+    {"timestamp":"2026-09-13T09:14:00Z","open":"0.338005","high":"0.3418","low":"0.33799","close":"0.3414345"},
+    {"timestamp":"2026-09-13T09:15:00Z","open":"0.341632","high":"0.345945","low":"0.341632","close":"0.345"}
+  ]
+}
