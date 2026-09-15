@@ -1,0 +1,69 @@
+--- ALFRED-GRID-008-shadow-review-v3/alfred_grid_008_shadow.py	2026-09-15 01:29:36.731770882 +0000
++++ ALFRED-GRID-008-replay-v4/alfred_grid_008_shadow.py	2026-09-15 01:37:06.663899086 +0000
+@@ -362,6 +362,66 @@
+         else:
+             raise ValueError("unsupported side")
+ 
++    def apply_broker_fill(
++        self,
++        order_id: str,
++        fill_price: Decimal,
++        fill_qty: Decimal,
++        *,
++        mid: Decimal | None = None,
++    ) -> str:
++        """Apply a confirmed full broker fill to persisted shadow state.
++
++        This is the event-driven integration boundary used by the fake-broker replay.
++        It deliberately does not infer fills from the current mid; a resting order may
++        fill even when the bar closes through the limit. Partial fills remain outside
++        ALFRED-GRID-008 and must be designed separately before any live integration.
++        """
++        fill_price, fill_qty = D(fill_price), q_qty(fill_qty)
++        if fill_price <= ZERO or fill_qty <= ZERO:
++            raise ValueError("fill price and qty must be positive")
++
++        for rung in self.rungs.values():
++            if rung.working_buy_order_id == order_id:
++                if rung.state != "armed":
++                    raise RuntimeError("buy fill received for non-armed rung")
++                rung.state = "sell_armed"
++                rung.filled_qty = fill_qty
++                rung.entry_price = fill_price
++                rung.sell_target = self.sell_target_for(fill_price)
++                rung.working_buy_order_id = ""
++                rung.working_sell_order_id = self._order_id("sell", rung)
++                rung.last_sell_order_id = rung.working_sell_order_id
++                self.fill_events += 1
++                return f"BUY_FILL {order_id} {fill_qty}@{fill_price}"
++
++            if rung.working_sell_order_id == order_id:
++                if rung.state != "sell_armed" or rung.filled_qty <= ZERO:
++                    raise RuntimeError("sell fill received for unowned rung")
++                if fill_qty != rung.filled_qty:
++                    raise RuntimeError("partial sell fill not supported in ALFRED-GRID-008 replay")
++                gross = (fill_price - rung.entry_price) * fill_qty
++                fees = (
++                    rung.entry_price * fill_qty * self.fees.maker_buy
++                    + fill_price * fill_qty * self.fees.maker_sell
++                    + rung.entry_price * fill_qty * self.fees.friction
++                )
++                net = gross - fees
++                rung.realized_net += net
++                self.realized_net_usd += net
++                self.completed_round_trips += 1
++                self.fill_events += 1
++                rung.working_sell_order_id = ""
++                rung.cycle += 1
++                rung.filled_qty = ZERO
++                rung.entry_price = ZERO
++                rung.sell_target = ZERO
++                rearm_mid = fill_price if mid is None else D(mid)
++                rung.state = "armed" if self.lane_kept and self.within_origin_window(rearm_mid) else "parked"
++                return f"SELL_FILL {order_id} net={net}"
++
++        raise KeyError(f"unknown working order id: {order_id}")
++
+     def clear_open_order(self, order_id: str) -> bool:
+         for rung in self.rungs.values():
+             if rung.working_buy_order_id == order_id:
