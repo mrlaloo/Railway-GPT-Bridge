@@ -24,6 +24,13 @@ const ALLOWED_SERVICES = Object.freeze({
     environmentId: "9ed78d4b-d19b-417b-a061-91ee8ba42324",
     serviceId: "198922a0-c60c-408c-8b41-22132dfbdccf",
   }),
+  darkvenus: Object.freeze({
+    key: "darkvenus",
+    name: "Dark Venus Stocks",
+    projectId: "5c903f86-8186-4c59-a1a3-03ef5cfe92c1",
+    environmentId: "9ed78d4b-d19b-417b-a061-91ee8ba42324",
+    serviceId: "59ff9177-8215-4828-bc01-18f196074c53",
+  }),
   moneypenny: Object.freeze({
     key: "moneypenny",
     name: "MoneyPenny-Forex",
@@ -147,13 +154,13 @@ async function runReadOnlyBootSelfTest() {
 }
 
 function registerRestrictedGrokTools(server) {
-  const serviceEnum = z.enum(["alfred", "moneypenny"]);
+  const serviceEnum = z.enum(["alfred", "moneypenny", "darkvenus"]);
 
   server.registerTool(
     "trading_bot_services",
     {
       title: "List allowed trading bot services",
-      description: "Lists the only Railway services available through this connector: Alfred Crypto and MoneyPenny. Read-only.",
+      description: "Lists the Railway services available through this connector: Alfred Crypto, MoneyPenny, and Dark Venus Stocks. Read-only.",
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
@@ -168,7 +175,7 @@ function registerRestrictedGrokTools(server) {
     "trading_bot_status",
     {
       title: "Get trading bot Railway status",
-      description: "Returns the latest successful Railway deployment metadata for Alfred Crypto or MoneyPenny. Read-only.",
+      description: "Returns the latest successful Railway deployment metadata for an allowed trading bot service. Read-only.",
       inputSchema: { service: serviceEnum },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     },
@@ -183,7 +190,7 @@ function registerRestrictedGrokTools(server) {
     "trading_bot_recent_deployments",
     {
       title: "List recent trading bot deployments",
-      description: "Lists recent Railway deployments for Alfred Crypto or MoneyPenny only. Read-only.",
+      description: "Lists recent Railway deployments for an allowed trading bot service only. Read-only.",
       inputSchema: {
         service: serviceEnum,
         limit: z.number().int().min(1).max(20).optional(),
@@ -201,7 +208,7 @@ function registerRestrictedGrokTools(server) {
     "trading_bot_logs",
     {
       title: "Read trading bot Railway logs",
-      description: "Reads runtime or build logs for Alfred Crypto or MoneyPenny only. If deployment_id is omitted, uses the latest successful deployment. This tool cannot deploy, restart, change variables, or place trades.",
+      description: "Reads runtime or build logs for an allowed trading bot service. If deployment_id is omitted, uses the latest successful deployment. This tool cannot deploy, restart, change variables, or place trades.",
       inputSchema: {
         service: serviceEnum,
         kind: z.enum(["runtime", "build"]).optional(),

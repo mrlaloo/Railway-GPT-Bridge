@@ -18,6 +18,14 @@ const SERVICES = Object.freeze({
     serviceId: "198922a0-c60c-408c-8b41-22132dfbdccf",
     tokenEnv: "ALFRED_RAILWAY_PROJECT_TOKEN",
   }),
+  darkvenus: Object.freeze({
+    key: "darkvenus",
+    name: "Dark Venus Stocks",
+    projectId: "5c903f86-8186-4c59-a1a3-03ef5cfe92c1",
+    environmentId: "9ed78d4b-d19b-417b-a061-91ee8ba42324",
+    serviceId: "59ff9177-8215-4828-bc01-18f196074c53",
+    tokenEnv: "ALFRED_RAILWAY_PROJECT_TOKEN",
+  }),
   moneypenny: Object.freeze({
     key: "moneypenny",
     name: "MoneyPenny-Forex",
@@ -135,13 +143,13 @@ function text(value) {
 
 function createMcpServer() {
   const server = new McpServer({ name: "grok-trading-bot-railway-readonly", version: "1.0.0" });
-  const serviceEnum = z.enum(["alfred", "moneypenny"]);
+  const serviceEnum = z.enum(["alfred", "moneypenny", "darkvenus"]);
 
   server.registerTool(
     "trading_bot_services",
     {
       title: "List trading bot services",
-      description: "Lists the only Railway services exposed to Grok: Alfred Crypto and MoneyPenny. Read-only.",
+      description: "Lists the Railway services exposed to Grok: Alfred Crypto, MoneyPenny, and Dark Venus Stocks. Read-only.",
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
@@ -156,7 +164,7 @@ function createMcpServer() {
     "trading_bot_status",
     {
       title: "Get trading bot deployment status",
-      description: "Returns latest successful deployment metadata for Alfred Crypto or MoneyPenny.",
+      description: "Returns latest successful deployment metadata for an allowed trading bot service.",
       inputSchema: { service: serviceEnum },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     },
@@ -170,7 +178,7 @@ function createMcpServer() {
     "trading_bot_recent_deployments",
     {
       title: "List recent bot deployments",
-      description: "Lists recent Railway deployments for Alfred Crypto or MoneyPenny only.",
+      description: "Lists recent Railway deployments for an allowed trading bot service only.",
       inputSchema: { service: serviceEnum, limit: z.number().int().min(1).max(20).optional() },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     },
@@ -184,7 +192,7 @@ function createMcpServer() {
     "trading_bot_logs",
     {
       title: "Read trading bot Railway logs",
-      description: "Reads runtime or build logs for Alfred Crypto or MoneyPenny. Cannot deploy, restart, change variables, or place trades.",
+      description: "Reads runtime or build logs for an allowed trading bot service. Cannot deploy, restart, change variables, or place trades.",
       inputSchema: {
         service: serviceEnum,
         kind: z.enum(["runtime", "build"]).optional(),
@@ -251,7 +259,7 @@ const httpServer = createServer(async (req, res) => {
       ok: true,
       service: "Grok Railway Trading Bot Log Bridge",
       mode: "read-only",
-      services: ["Alfred Crypto", "MoneyPenny"],
+      services: ["Alfred Crypto", "MoneyPenny", "Dark Venus Stocks"],
     }));
   }
 
