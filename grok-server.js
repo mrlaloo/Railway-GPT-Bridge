@@ -90,8 +90,8 @@ async function recentDeployments(service, limit = 10) {
 async function latestSuccessful(service) {
   const payload = await railwayQuery(
     service,
-    `query latestDeployment($input: DeploymentListInput!) {
-      deployments(input: $input, first: 1) {
+    `query latestDeployment($input: DeploymentListInput!, $first: Int) {
+      deployments(input: $input, first: $first) {
         edges { node { id status createdAt meta } }
       }
     }`,
@@ -100,11 +100,12 @@ async function latestSuccessful(service) {
         projectId: service.projectId,
         serviceId: service.serviceId,
         environmentId: service.environmentId,
-        status: { successfulOnly: true },
       },
+      first: 5,
     }
   );
-  return payload.data?.deployments?.edges?.[0]?.node ?? null;
+  const nodes = payload.data?.deployments?.edges?.map((edge) => edge.node) ?? [];
+  return nodes.find((node) => node.status === "SUCCESS") ?? null;
 }
 
 async function readLogs(service, deploymentId, kind, limit, filter, startDate, endDate) {
