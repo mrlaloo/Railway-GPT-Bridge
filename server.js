@@ -34,8 +34,8 @@ const ALLOWED_SERVICES = Object.freeze({
 });
 
 function railwayToken() {
-  const token = process.env.RAILWAY_TOKEN?.trim();
-  if (!token) throw new Error("RAILWAY_TOKEN is not configured.");
+  const token = process.env.BRIDGE_RAILWAY_TOKEN?.trim() || process.env.RAILWAY_TOKEN?.trim();
+  if (!token) throw new Error("Railway API credential is not configured.");
   return token;
 }
 
