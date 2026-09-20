@@ -48,16 +48,28 @@ function projectTokenFor(service) {
   return token;
 }
 
+function workspaceTokenFor() {
+  return process.env.RAILWAY_WORKSPACE_TOKEN?.trim() || null;
+}
+
 async function railwayQuery(service, query, variables = {}) {
   if (/\bmutation\b/i.test(query)) throw new Error("Mutations are disabled.");
   if (/\b(variable|secret|token)\b/i.test(query)) throw new Error("Secret/variable queries are disabled.");
 
+  const workspaceToken = workspaceTokenFor();
+  const headers = workspaceToken
+    ? {
+        Authorization: `Bearer ${workspaceToken}`,
+        "Content-Type": "application/json",
+      }
+    : {
+        "Project-Access-Token": projectTokenFor(service),
+        "Content-Type": "application/json",
+      };
+
   const response = await fetch(RAILWAY_API, {
     method: "POST",
-    headers: {
-      "Project-Access-Token": projectTokenFor(service),
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({ query, variables }),
   });
 
