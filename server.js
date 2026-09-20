@@ -12,7 +12,7 @@ const pathSecret = process.env.MCP_PATH_SECRET?.trim();
 const mcpPath = pathSecret ? `/mcp-${pathSecret}` : "/mcp-disabled";
 
 const GROK_PATH_PREFIX = "/grok-mcp/";
-const GROK_SECRET_SHA256 = "349d65e55bbe16f6b90095113821637fdc0b7ccffb9a882aa58616e385df0767";
+const GROK_SECRET_SHA256 = "2662290935d4a17e23a8863b1d1d4a69864537d9a1677d53d5b266fa23356d6e";
 
 const blockedWords = /\b(token|secret|environmentVariables|variableCollection|variables)\b/i;
 
@@ -122,6 +122,28 @@ async function latestSuccessfulDeployment(service) {
     }
   );
   return result.data?.deployments?.edges?.[0]?.node ?? null;
+}
+
+async function runReadOnlyBootSelfTest() {
+  for (const svc of Object.values(ALLOWED_SERVICES)) {
+    try {
+      const latest = await latestSuccessfulDeployment(svc);
+      if (!latest?.id) {
+        console.warn(`GROK_MCP_SELFTEST service=${svc.key} status=no_successful_deployment`);
+        continue;
+      }
+      const logResult = await railwayGraphql(
+        `query deploymentLogs($deploymentId: String!, $limit: Int) {
+          deploymentLogs(deploymentId: $deploymentId, limit: $limit) { timestamp message severity }
+        }`,
+        { deploymentId: latest.id, limit: 1 }
+      );
+      const count = logResult.data?.deploymentLogs?.length ?? 0;
+      console.log(`GROK_MCP_SELFTEST service=${svc.key} status=ok deployment=${latest.id} log_rows=${count}`);
+    } catch (error) {
+      console.error(`GROK_MCP_SELFTEST service=${svc.key} status=failed error=${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 function registerRestrictedGrokTools(server) {
@@ -359,4 +381,5 @@ const httpServer = createServer(async (req, res) => {
 
 httpServer.listen(port, "0.0.0.0", () => {
   console.log(`Railway GPT Bridge listening on port ${port}; Grok trading-bot log access=enabled`);
+  void runReadOnlyBootSelfTest();
 });
