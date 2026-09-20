@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { parse } from "graphql";
@@ -10,8 +11,8 @@ const port = Number(process.env.PORT ?? 8787);
 const pathSecret = process.env.MCP_PATH_SECRET?.trim();
 const mcpPath = pathSecret ? `/mcp-${pathSecret}` : "/mcp-disabled";
 
-const grokPathSecret = process.env.GROK_MCP_PATH_SECRET?.trim();
-const grokMcpPath = grokPathSecret ? `/grok-mcp-${grokPathSecret}` : "/grok-mcp-disabled";
+const GROK_PATH_PREFIX = "/grok-mcp/";
+const GROK_SECRET_SHA256 = "349d65e55bbe16f6b90095113821637fdc0b7ccffb9a882aa58616e385df0767";
 
 const blockedWords = /\b(token|secret|environmentVariables|variableCollection|variables)\b/i;
 
@@ -68,6 +69,15 @@ async function railwayGraphql(query, variables = {}) {
 
 function textResult(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+function matchesGrokPath(pathname) {
+  if (!pathname.startsWith(GROK_PATH_PREFIX)) return false;
+  const candidate = pathname.slice(GROK_PATH_PREFIX.length);
+  if (candidate.length < 24 || candidate.length > 128) return false;
+  const actual = Buffer.from(createHash("sha256").update(candidate).digest("hex"), "utf8");
+  const expected = Buffer.from(GROK_SECRET_SHA256, "utf8");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 function allowedService(key) {
@@ -323,12 +333,12 @@ const httpServer = createServer(async (req, res) => {
       ok: true,
       service: "Railway GPT Bridge",
       genericMode: "read-only",
-      grokMode: grokPathSecret ? "trading-bots-read-only" : "disabled",
+      grokMode: "trading-bots-read-only",
     }));
   }
 
   const isExistingPath = pathSecret && pathSecret.length >= 24 && url.pathname === mcpPath;
-  const isGrokPath = grokPathSecret && grokPathSecret.length >= 24 && url.pathname === grokMcpPath;
+  const isGrokPath = matchesGrokPath(url.pathname);
 
   if (req.method === "OPTIONS" && (isExistingPath || isGrokPath)) {
     res.writeHead(204, {
@@ -348,5 +358,5 @@ const httpServer = createServer(async (req, res) => {
 });
 
 httpServer.listen(port, "0.0.0.0", () => {
-  console.log(`Railway GPT Bridge listening on port ${port}; Grok trading-bot log access=${grokPathSecret ? "enabled" : "disabled"}`);
+  console.log(`Railway GPT Bridge listening on port ${port}; Grok trading-bot log access=enabled`);
 });
